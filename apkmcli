@@ -50,14 +50,45 @@ def download_app(app_name, version):
     builds_dir = "builds"
     os.makedirs(builds_dir, exist_ok=True)
     
-    clean_app_name = app_name.replace(' ', '_')
-    old_files = glob.glob(os.path.join(builds_dir, f"{clean_app_name}_*_myst25.*"))
+    PACKAGE_NAMES = {
+        "YouTube": "com.google.android.youtube",
+        "YouTube Music": "com.google.android.apps.youtube.music",
+        "X": "com.twitter.android",
+        "Instagram": "com.instagram.android"
+    }
+    
+    pkg_name_for_delete = PACKAGE_NAMES.get(app_name)
+    if pkg_name_for_delete:
+        old_files = glob.glob(os.path.join(builds_dir, f"{pkg_name_for_delete}-*-all.*"))
+    else:
+        clean_app_name = app_name.replace(' ', '_')
+        old_files = glob.glob(os.path.join(builds_dir, f"{clean_app_name}_*_myst25.*"))
+
     for old_file in old_files:
         try:
             os.remove(old_file)
             print(f"Deleted old version: {old_file}")
         except Exception as e:
             print(f"Failed to delete {old_file}: {e}")
+
+
+
+    # Extract clean version without spaces
+    clean_version = version.replace(' ', '_')
+    if not clean_version:
+        # If version was blank, try to extract it from the scraped name (e.g. "YouTube 21.21.80")
+        name_parts = filtered_results[0]['name'].split()
+        clean_version = name_parts[-1] if name_parts else "latest"
+        
+    pkg_name = PACKAGE_NAMES.get(app_name)
+    
+    if pkg_name:
+        # Use exact requested format: com.google.android.youtube-21.18.168-all.apk
+        base_filename = f"{pkg_name}-{clean_version}-all"
+    else:
+        # Fallback to old format if package name is unknown
+        clean_name = filtered_results[0]['name'].replace(' ', '_')
+        base_filename = f"{clean_name}_myst25"
 
     ext = ".apk"
     cd = dl_resp.headers.get('content-disposition')
@@ -67,8 +98,7 @@ def download_app(app_name, version):
             original_filename = fname[0].strip('"')
             ext = os.path.splitext(original_filename)[1]
 
-    clean_name = filtered_results[0]['name'].replace(' ', '_')
-    filename = os.path.join(builds_dir, f"{clean_name}_myst25{ext}")
+    filename = os.path.join(builds_dir, f"{base_filename}{ext}")
 
     print(f"Saving to {filename}...")
     with open(filename, 'wb') as f:
@@ -81,7 +111,7 @@ def download_app(app_name, version):
         print("Bundle detected. Extracting base APK...")
         extracted = apkm_converter.extract_base_apk(filename, output_dir=builds_dir)
         if extracted:
-            final_apk_name = os.path.join(builds_dir, f"{clean_name}_myst25.apk")
+            final_apk_name = os.path.join(builds_dir, f"{base_filename}.apk")
             if os.path.abspath(extracted) != os.path.abspath(final_apk_name):
                 os.rename(extracted, final_apk_name)
             os.remove(filename)
