@@ -1,0 +1,147 @@
+"""
+UptoDown APK scraper — works for ALL apps including Instagram
+that are blocked on APKMirror by Cloudflare Turnstile.
+
+URL pattern: https://[app-slug].en.uptodown.com/android/download
+Download URL: https://dw.uptodown.com/dwn/[token]
+"""
+
+import time
+from urllib.parse import quote_plus
+from bs4 import BeautifulSoup
+import cloudscraper
+
+
+# Map known app names to their UptoDown slugs
+APP_SLUGS = {
+    "YouTube": "youtube",
+    "YouTube Music": "youtube-music",
+    "X": "twitter",
+    "Instagram": "instagram",
+    "TikTok": "tik-tok",
+    "WhatsApp": "whatsapp",
+    "Snapchat": "snapchat",
+    "Facebook": "facebook",
+    "Telegram": "telegram",
+    "Spotify": "spotify",
+}
+
+
+class UptoDown:
+    def __init__(self, timeout=2):
+        self.timeout = timeout
+        self.base_url = "https://en.uptodown.com"
+        self.dw_base = "https://dw.uptodown.com/dwn"
+        self.headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://en.uptodown.com/",
+        }
+        self.scraper = cloudscraper.create_scraper()
+
+    def _get(self, url):
+        time.sleep(self.timeout)
+        return self.scraper.get(url, headers=self.headers, timeout=15)
+
+    def get_app_slug(self, app_name):
+        """Get the UptoDown slug for an app name, searching if not in known list."""
+        slug = APP_SLUGS.get(app_name)
+        if slug:
+            return slug
+        # Try converting app name to a slug guess
+        return app_name.lower().replace(" ", "-")
+
+    def get_download_info(self, app_name):
+        """Get the latest version and direct download URL for an app."""
+        slug = self.get_app_slug(app_name)
+        app_url = f"https://{slug}.en.uptodown.com/android"
+        download_page_url = f"{app_url}/download"
+
+        print(f"[uptodown] Fetching {download_page_url}")
+        r = self._get(download_page_url)
+
+        if r.status_code != 200:
+            print(f"[uptodown] Failed: status {r.status_code}")
+            return None
+
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        # Get the download token from the button
+        btn = soup.find("button", {"id": "detail-download-button"})
+        if not btn:
+            print("[uptodown] Could not find download button")
+            return None
+
+        token = btn.get("data-url")
+        if not token:
+            print("[uptodown] No download token found")
+            return None
+
+        # Get version info
+        version = None
+        version_el = soup.find("span", {"itemprop": "version"})
+        if not version_el:
+            version_el = soup.find("div", {"class": "version"})
+        if version_el:
+            version = version_el.text.strip()
+
+        direct_url = f"{self.dw_base}/{token}"
+
+        return {
+            "app_name": app_name,
+            "version": version or "unknown",
+            "download_url": direct_url,
+            "app_page": app_url,
+        }
+
+    def download(self, app_name, output_dir="builds", package_name=None):
+        """Download the latest APK for an app."""
+        import os
+
+        info = self.get_download_info(app_name)
+        if not info:
+            print(f"[uptodown] Could not get download info for {app_name}")
+            return None
+
+        version = info["version"]
+        print(f"[uptodown] Downloading {app_name} {version} from {info['download_url']}")
+
+        # Build filename using package name if provided
+        os.makedirs(output_dir, exist_ok=True)
+        if package_name:
+            filename = os.path.join(output_dir, f"{package_name}-{version}-all.apk")
+        else:
+            clean = app_name.replace(" ", "_")
+            filename = os.path.join(output_dir, f"{clean}-{version}-all.apk")
+
+        # Delete old versions
+        import glob
+        if package_name:
+            old_files = glob.glob(os.path.join(output_dir, f"{package_name}-*-all.*"))
+        else:
+            old_files = glob.glob(os.path.join(output_dir, f"{app_name.replace(' ', '_')}-*-all.*"))
+        for f in old_files:
+            try:
+                os.remove(f)
+                print(f"[uptodown] Removed old: {f}")
+            except Exception:
+                pass
+
+        r = self.scraper.get(info["download_url"], headers=self.headers, stream=True, timeout=60)
+        if r.status_code != 200:
+            print(f"[uptodown] Download failed: status {r.status_code}")
+            return None
+
+        # Try to get filename from the URL (e.g. instagram-433-0.0.4-68.apk)
+        final_url = r.url
+        url_filename = final_url.split("/")[-1]
+        if url_filename.endswith(".apk") and package_name:
+            filename = os.path.join(output_dir, f"{package_name}-{version}-all.apk")
+
+        print(f"[uptodown] Saving to {filename}...")
+        with open(filename, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+
+        print(f"[uptodown] Done: {filename}")
+        return filename

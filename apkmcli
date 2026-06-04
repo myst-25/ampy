@@ -4,20 +4,54 @@ import sys
 import os
 import re
 import glob
+import json
 
 from apkmirror import APKMirror
+from uptodown import UptoDown
 import apkm_converter
 
 apkm = APKMirror(timeout=3, results=5)
+uptodown = UptoDown(timeout=2)
 
-def download_app(app_name, version):
+PACKAGE_NAMES = {
+    "YouTube": "com.google.android.youtube",
+    "YouTube Music": "com.google.android.apps.youtube.music",
+    "X": "com.twitter.android",
+    "Instagram": "com.instagram.android",
+    "TikTok": "com.zhiliaoapp.musically",
+    "WhatsApp": "com.whatsapp",
+    "Snapchat": "com.snapchat.android",
+    "Facebook": "com.facebook.katana",
+    "Telegram": "org.telegram.messenger",
+    "Spotify": "com.spotify.music",
+}
+
+# Apps that are blocked on APKMirror by Cloudflare — use UptoDown for these
+UPTODOWN_ONLY = {"Instagram", "Facebook", "WhatsApp", "Snapchat", "TikTok"}
+
+
+def download_via_uptodown(app_name):
+    """Download latest APK via UptoDown (no Cloudflare restrictions)."""
+    print(f"\n--- Processing {app_name} via UptoDown ---")
+    pkg_name = PACKAGE_NAMES.get(app_name)
+    filename = uptodown.download(app_name, output_dir="builds", package_name=pkg_name)
+    if filename:
+        print(f"Ready: {filename}")
+    else:
+        print(f"Failed to download {app_name} via UptoDown.")
+    return filename
+
+
+def download_via_apkmirror(app_name, version):
+    """Download specific version APK via APKMirror."""
     search_query = f"{app_name} {version}".strip()
-    print(f"\n--- Processing {app_name} ---")
+    print(f"\n--- Processing {app_name} via APKMirror ---")
     results = apkm.search(search_query)
 
     if not results:
-        print(f"No results found for {search_query}.")
-        return
+        print(f"No results found for '{search_query}' on APKMirror.")
+        print(f"Falling back to UptoDown for {app_name}...")
+        return download_via_uptodown(app_name)
 
     filtered_results = []
     for r in results:
@@ -26,7 +60,7 @@ def download_app(app_name, version):
             remainder = name[len(app_name):].strip()
             if remainder and remainder[0].isdigit():
                 filtered_results.append(r)
-                
+
     if not filtered_results:
         filtered_results = results
 
@@ -34,8 +68,8 @@ def download_app(app_name, version):
     app_details = apkm.get_app_details(filtered_results[0]["link"])
 
     if not app_details:
-        print("Could not find suitable variants.")
-        return
+        print("Could not find suitable variants on APKMirror. Falling back to UptoDown...")
+        return download_via_uptodown(app_name)
 
     print(f"Selected best variant: {app_details['architecture']} ({app_details['type']})")
 
@@ -49,17 +83,11 @@ def download_app(app_name, version):
 
     builds_dir = "builds"
     os.makedirs(builds_dir, exist_ok=True)
-    
-    PACKAGE_NAMES = {
-        "YouTube": "com.google.android.youtube",
-        "YouTube Music": "com.google.android.apps.youtube.music",
-        "X": "com.twitter.android",
-        "Instagram": "com.instagram.android"
-    }
-    
-    pkg_name_for_delete = PACKAGE_NAMES.get(app_name)
-    if pkg_name_for_delete:
-        old_files = glob.glob(os.path.join(builds_dir, f"{pkg_name_for_delete}-*-all.*"))
+
+    pkg_name = PACKAGE_NAMES.get(app_name)
+
+    if pkg_name:
+        old_files = glob.glob(os.path.join(builds_dir, f"{pkg_name}-*-all.*"))
     else:
         clean_app_name = app_name.replace(' ', '_')
         old_files = glob.glob(os.path.join(builds_dir, f"{clean_app_name}_*_myst25.*"))
@@ -71,22 +99,14 @@ def download_app(app_name, version):
         except Exception as e:
             print(f"Failed to delete {old_file}: {e}")
 
-
-
-    # Extract clean version without spaces
     clean_version = version.replace(' ', '_')
     if not clean_version:
-        # If version was blank, try to extract it from the scraped name (e.g. "YouTube 21.21.80")
         name_parts = filtered_results[0]['name'].split()
         clean_version = name_parts[-1] if name_parts else "latest"
-        
-    pkg_name = PACKAGE_NAMES.get(app_name)
-    
+
     if pkg_name:
-        # Use exact requested format: com.google.android.youtube-21.18.168-all.apk
         base_filename = f"{pkg_name}-{clean_version}-all"
     else:
-        # Fallback to old format if package name is unknown
         clean_name = filtered_results[0]['name'].replace(' ', '_')
         base_filename = f"{clean_name}_myst25"
 
@@ -120,10 +140,18 @@ def download_app(app_name, version):
             print("Extraction failed.")
     else:
         print(f"Ready: {filename}")
+    return filename
+
+
+def download_app(app_name, version=""):
+    """Smart downloader: uses UptoDown for Cloudflare-blocked apps, APKMirror otherwise."""
+    if app_name in UPTODOWN_ONLY:
+        return download_via_uptodown(app_name)
+    else:
+        return download_via_apkmirror(app_name, version)
+
 
 def main():
-    import json
-    
     # Check for non-interactive flag
     if len(sys.argv) > 1 and sys.argv[1] == "--download-all":
         try:
@@ -135,10 +163,11 @@ def main():
             download_app(app_name, version)
         return
 
-    apps = ["YouTube", "YouTube Music", "X"]
-    print("Select an app to search:")
+    apps = ["YouTube", "YouTube Music", "X", "Instagram"]
+    print("Select an app to download:")
     for i, app in enumerate(apps):
-        print(f"[{i+1}] {app}")
+        src = "UptoDown" if app in UPTODOWN_ONLY else "APKMirror"
+        print(f"[{i+1}] {app} (via {src})")
     print(f"[{len(apps)+1}] Download All (from apps.json)")
     print(f"[{len(apps)+2}] Custom Search")
 
@@ -149,15 +178,17 @@ def main():
 
     if 0 <= app_choice < len(apps):
         app_name = apps[app_choice]
-        version = input(f"Enter version for {app_name} (or leave blank for latest):\n -> ")
-        download_app(app_name, version)
+        if app_name in UPTODOWN_ONLY:
+            download_app(app_name)
+        else:
+            version = input(f"Enter version for {app_name} (or leave blank for latest):\n -> ")
+            download_app(app_name, version)
     elif app_choice == len(apps):
         try:
             with open("apps.json", "r") as f:
                 apps_config = json.load(f)
         except Exception as e:
             sys.exit(f"Failed to read apps.json: {e}")
-            
         for app_name, version in apps_config.items():
             download_app(app_name, version)
     elif app_choice == len(apps) + 1:
