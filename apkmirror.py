@@ -116,32 +116,25 @@ class APKMirror:
         if not variants:
             return None
             
-        # Priority ranking:
-        # 1. APK + universal
-        # 2. APK + any
-        # 3. BUNDLE + universal
-        # 4. BUNDLE + any
-        
-        best_variant = None
-        for variant in variants:
-            if variant["type"] == "APK" and variant["architecture"].lower() == "universal":
-                best_variant = variant
-                break
-                
-        if not best_variant:
-            for variant in variants:
-                if variant["type"] == "APK":
-                    best_variant = variant
-                    break
-                    
-        if not best_variant:
-            for variant in variants:
-                if variant["type"] == "BUNDLE" and variant["architecture"].lower() == "universal":
-                    best_variant = variant
-                    break
-                    
-        if not best_variant:
-            best_variant = variants[0]
+        def score_variant(v):
+            score = 0
+            # Prioritize APK over BUNDLE
+            if v["type"] == "APK": score += 1000
+            elif v["type"] == "BUNDLE": score += 500
+            
+            # Prioritize universal architecture
+            arch = v["architecture"].lower()
+            if arch == "universal": score += 100
+            elif "arm64-v8a" in arch: score += 50
+            elif "armeabi-v7a" in arch: score += 10
+            
+            # Prioritize nodpi for maximum compatibility
+            dpi = v["dpi"].lower()
+            if dpi == "nodpi": score += 20
+            
+            return score
+            
+        best_variant = max(variants, key=score_variant)
             
         return best_variant
 
