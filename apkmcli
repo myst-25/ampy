@@ -39,7 +39,7 @@ def download_via_uptodown(app_name, pkg_name=None):
     return filename
 
 
-def download_app(app_name, version=""):
+def download_app(app_name, version="", ask_before_delete=False):
     """
     Try APKMirror first. If it blocks (403 / no results), auto-switch to UptoDown.
     Works for ANY app the user searches — not just the hardcoded list.
@@ -98,6 +98,16 @@ def download_app(app_name, version=""):
         old_files = glob.glob(os.path.join(builds_dir, f"{pkg_name}-*-all.*"))
     else:
         old_files = glob.glob(os.path.join(builds_dir, f"{app_name.replace(' ', '_')}-*.*"))
+
+    if old_files and ask_before_delete:
+        print(f"\nFound existing APK(s):")
+        for f in old_files:
+            size = os.path.getsize(f) / (1024*1024)
+            print(f"  {os.path.basename(f)} ({size:.1f} MB)")
+        confirm = input("Delete old APK(s) before downloading? (y/n):\n → ").strip().lower()
+        if confirm not in ("y", "yes", ""):
+            old_files = []  # skip deletion
+
     for f in old_files:
         try:
             os.remove(f)
@@ -188,19 +198,19 @@ def main():
         if choice == 0:
             app_name = input("App name to search:\n → ").strip()
             version = input(f"Version (leave blank for latest):\n → ").strip()
-            download_app(app_name, version)
+            download_app(app_name, version, ask_before_delete=True)
         elif 1 <= choice <= len(ref_list):
             name, ver = ref_list[choice - 1]
-            download_app(name, ver)
+            download_app(name, ver, ask_before_delete=True)
         elif choice == len(ref_list) + 1:
             for name, ver in ref_list:
-                download_app(name, ver)
+                download_app(name, ver, ask_before_delete=False)
         else:
             sys.exit("Invalid choice.")
     else:
         app_name = input("App name to search:\n → ").strip()
         version = input(f"Version (leave blank for latest):\n → ").strip()
-        download_app(app_name, version)
+        download_app(app_name, version, ask_before_delete=True)
 
 
 if __name__ == "__main__":
