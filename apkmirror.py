@@ -35,6 +35,11 @@ class APKMirror:
 
         print(f"[search] Status: {resp.status_code}")
 
+        # Cloudflare blocked — signal caller to fall back
+        if resp.status_code == 403 or "Just a moment" in resp.text:
+            print("[search] Blocked by Cloudflare.")
+            return None
+
         soup = BeautifulSoup(resp.text, "html.parser")
         apps = []
         appRow = soup.find_all("div", {"class": "appRow"})

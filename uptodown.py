@@ -7,6 +7,7 @@ Download URL: https://dw.uptodown.com/dwn/[token]
 """
 
 import time
+import re
 from urllib.parse import quote_plus
 from bs4 import BeautifulSoup
 import cloudscraper
@@ -44,12 +45,48 @@ class UptoDown:
         return self.scraper.get(url, headers=self.headers, timeout=15)
 
     def get_app_slug(self, app_name):
-        """Get the UptoDown slug for an app name, searching if not in known list."""
+        """Get the UptoDown slug: check known list first, then search UptoDown."""
         slug = APP_SLUGS.get(app_name)
         if slug:
             return slug
-        # Try converting app name to a slug guess
+
+        # Try searching UptoDown for the app
+        slug = self._search_slug(app_name)
+        if slug:
+            return slug
+
+        # Last resort: guess the slug from the name
         return app_name.lower().replace(" ", "-")
+
+    def _search_slug(self, app_name):
+        """Search UptoDown to find the correct app slug."""
+        try:
+            query = quote_plus(app_name)
+            # UptoDown search API
+            url = f"https://en.uptodown.com/android/search/{query}"
+            r = self.scraper.get(url, headers=self.headers, timeout=10)
+            if r.status_code != 200:
+                # Try alternative search format
+                url = f"https://en.uptodown.com/android/q/{query}"
+                r = self.scraper.get(url, headers=self.headers, timeout=10)
+            if r.status_code == 200:
+                soup = BeautifulSoup(r.text, "html.parser")
+                # Find first result app link
+                result = soup.find("a", {"class": "item"})
+                if not result:
+                    result = soup.find("div", {"class": "item"})
+                    if result:
+                        result = result.find("a")
+                if result and result.get("href"):
+                    href = result["href"]
+                    # Extract slug from URL like https://instagram.en.uptodown.com/android
+                    import re
+                    m = re.search(r"https?://([^.]+)\.en\.uptodown\.com", href)
+                    if m:
+                        return m.group(1)
+        except Exception as e:
+            print(f"[uptodown] Search error: {e}")
+        return None
 
     def get_download_info(self, app_name):
         """Get the latest version and direct download URL for an app."""
