@@ -88,12 +88,35 @@ class UptoDown:
             print(f"[uptodown] Search error: {e}")
         return None
 
-    def get_download_info(self, app_name):
-        """Get the latest version and direct download URL for an app."""
+    def get_download_info(self, app_name, target_version=None):
+        """Get the specified version (or latest) and direct download URL for an app."""
         slug = self.get_app_slug(app_name)
         app_url = f"https://{slug}.en.uptodown.com/android"
-        download_page_url = f"{app_url}/download"
+        
+        target_version = target_version.strip() if target_version else None
+        if target_version and target_version.lower() != "latest":
+            # Search for specific version
+            versions_url = f"{app_url}/versions"
+            print(f"[uptodown] Fetching versions from {versions_url}")
+            r = self._get(versions_url)
+            if r.status_code == 200:
+                soup = BeautifulSoup(r.text, "html.parser")
+                versions_list = soup.find("div", {"id": "versions-items-list"})
+                if versions_list:
+                    for item in versions_list.find_all("div", recursive=False):
+                        v_span = item.find("span", {"class": "version"})
+                        if v_span and target_version in v_span.text.strip():
+                            v_id = item.get("data-version-id")
+                            if v_id:
+                                download_page_url = f"{app_url}/download/{v_id}"
+                                return self._parse_download_page(app_name, app_url, download_page_url)
+            print(f"[uptodown] Target version '{target_version}' not found. Falling back to latest.")
 
+        # Default to latest
+        download_page_url = f"{app_url}/download"
+        return self._parse_download_page(app_name, app_url, download_page_url)
+
+    def _parse_download_page(self, app_name, app_url, download_page_url):
         print(f"[uptodown] Fetching {download_page_url}")
         r = self._get(download_page_url)
 
@@ -131,11 +154,11 @@ class UptoDown:
             "app_page": app_url,
         }
 
-    def download(self, app_name, output_dir="builds", package_name=None):
+    def download(self, app_name, version=None, output_dir="builds", package_name=None):
         """Download the latest APK for an app."""
         import os
 
-        info = self.get_download_info(app_name)
+        info = self.get_download_info(app_name, target_version=version)
         if not info:
             print(f"[uptodown] Could not get download info for {app_name}")
             return None
